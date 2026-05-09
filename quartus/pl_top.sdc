@@ -84,7 +84,7 @@ set_false_path -from [get_ports {SW[*]}]
 
 # -----------------------------------------------------------------------------
 # 6. UART_RXD — recepção serial (9600 baud, 104 µs/bit)
-#    Amostrado por sc_uart via detecção de start-bit e amostragem no meio
+#    Amostrado por pl_uart via detecção de start-bit e amostragem no meio
 #    do bit. A janela de amostragem (≥ 52 µs) é ≈ 520× maior que o período
 #    de clk_cpu — nenhuma relação de fase válida com o clock do sistema.
 # -----------------------------------------------------------------------------
@@ -116,7 +116,7 @@ set_false_path -to [get_ports {LEDG[*]}]
 
 # -----------------------------------------------------------------------------
 # 9. UART_TXD — transmissão serial (9600 baud, 104 µs/bit)
-#    Gerado por sc_uart clocked em clk_cpu. O receptor UART amostra no centro
+#    Gerado por pl_uart clocked em clk_cpu. O receptor UART amostra no centro
 #    do bit (≈ 52 µs após a transição de start). A variação de saída de 1 ciclo
 #    (100 ns) representa < 0,2 % do período de bit — sem impacto na recepção.
 # -----------------------------------------------------------------------------

@@ -14,7 +14,7 @@
 //   - CLK_FREQ_HZ = 50_000_000 propagado para pl_mmio via pl_cpu
 //
 // ATENÇÃO — UART a 50 MHz:
-//   pl_mmio instancia sc_uart com CLK_HZ = 10_000_000 (hardcoded).
+//   pl_mmio instancia pl_uart com CLK_HZ = 10_000_000 (hardcoded).
 //   A 50 MHz o divisor de baud estará errado por fator 5, portanto a
 //   comunicação serial NÃO funcionará corretamente nesta variante.
 //   Para corrigir, altere pl_mmio.sv: .CLK_HZ(50_000_000)

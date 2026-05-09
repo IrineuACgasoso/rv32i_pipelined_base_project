@@ -1,9 +1,9 @@
 // =============================================================================
-// sc_uart.sv
+// pl_uart.sv
 // Simple RS-232 UART -- 8N1 (8 data bits, no parity, 1 stop bit)
 //
 // Parameters:
-//   CLK_HZ : CPU clock frequency in Hz (default 10 MHz)
+//   CLK_HZ : CPU clock frequency in Hz (default 50 MHz)
 //   BAUD   : desired baud rate         (default 9600)
 //
 // TX interface:
@@ -20,15 +20,15 @@
 //               stop bit confirmed HIGH)
 //   RXD       -- RS-232 receive pin (idle HIGH), double-flopped internally
 //
-// Baud-rate error at 9600 baud / 10 MHz:
-//   CLKS_PER_BIT = 10_000_000 / 9_600 = 1041
-//   Actual baud  = 10_000_000 / 1041  = 9606  (error < 0.1 % -- well within RS-232 spec)
+// Baud-rate error at 9600 baud / 50 MHz:
+//   CLKS_PER_BIT = 50_000_000 / 9_600 = 5208
+//   Actual baud  = 50_000_000 / 5208  = 9601  (error < 0.1 % -- well within RS-232 spec)
 // =============================================================================
 
 `timescale 1ns / 1ps
 
-module sc_uart #(
-    parameter int CLK_HZ = 10_000_000,
+module pl_uart #(
+    parameter int CLK_HZ = 50_000_000,
     parameter int BAUD   =      9_600
 ) (
     input  logic       clk,

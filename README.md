@@ -79,10 +79,13 @@ Processador RISC-V de 32 bits com pipeline de 5 estágios implementado em System
 | `0x408` | 32 b | W | LEDR\[17:0\] — LEDs vermelhos |
 | `0x40C` | 32 b | W | LEDG\[8:0\] — LEDs verdes |
 | `0x410` | 32 b | R/W | UART RS-232 (8N1, 9600 baud) |
+| `0x414` | 32 b | R | Contador de ciclos de clock (32 bits, reset em 0) |
 
 Seleção: `alu_result[10] = 1` redireciona o acesso ao controlador MMIO (`pl_mmio`).
 
-Leitura da UART: `{22'b0, tx_busy[9], rx_ready[8], rx_data[7:0]}`
+**Leitura da UART (`lw` em 0x410):** `{22'b0, tx_busy[9], rx_ready[8], rx_data[7:0]}`
+
+**Escrita na UART (`sw` em 0x410):** o hardware (`pl_mmio`) divide automaticamente a palavra de 32 bits em 4 bytes e os envia em sequência little-endian (byte 0 primeiro). `tx_busy` permanece alto até o último byte ser aceito pelo shift register. O software deve aguardar `tx_busy = 0` antes de escrever nova palavra.
 
 ### ALU — codificação de operação
 
@@ -113,7 +116,7 @@ rv32i_pipelined_base_project/
 │   ├── pl_imem.sv              Memória de instruções 256×32 b (MIF)
 │   ├── pl_dmem.sv              Memória de dados 256×32 b (MIF)
 │   ├── pl_mmio.sv              Controlador MMIO (SW/KEY/LED/UART)
-│   ├── sc_uart.sv              UART RS-232 8N1 (9600 baud, 10 MHz)
+│   ├── pl_uart.sv              UART RS-232 8N1 (9600 baud, 50 MHz)
 │   ├── pl_hazard.sv            Detecção de hazard load-use
 │   ├── pl_forward.sv           Unidade de forwarding
 │   ├── pl_datapath.sv          Datapath 5 estágios
@@ -127,7 +130,14 @@ rv32i_pipelined_base_project/
 │   └── mmio_test_data.mif      Dados para o teste MMIO
 │
 ├── assembler/
-│   └── assembler.py            Montador Python: assembly → .mif
+│   ├── assembler.py            Montador Python: assembly → .mif / dump
+│   ├── hello.asm               Programa de entrada padrão
+│   ├── instruction.mif         MIF gerado (saída do assembler)
+│   ├── data.mif                MIF de dados gerado (modo --dump)
+│   └── program.hex             Hex gerado (modo normal)
+│
+├── dump/
+│   └── serial_dump.py          Captura e decodifica dump serial do FPGA
 │
 ├── modelsim/                   Projeto ModelSim para simulação
 │   ├── *.mpf                   Arquivo de projeto ModelSim
@@ -192,28 +202,76 @@ Estado final esperado: `x1=10  x2=20  x3=30  x4=10  x5=10  x6=30  x7=30  x8=20  
 
 O script `assembler/assembler.py` converte assembly textual para o formato `.mif`.
 
-**Uso:**
+### Uso
 
 ```bash
-# Edite assembler/instructions.txt com o programa desejado
-python3 assembler/assembler.py
+cd assembler
+
+# modo normal — gera instruction.mif + program.hex
+python3 assembler.py programa.asm
+
+# sem argumento — usa instructions.txt como padrão
+python3 assembler.py
+
+# modo dump — gera instruction.mif + data.mif com dump serial embutido
+python3 assembler.py --dump programa.asm
 ```
 
-O script gera dois arquivos no diretório corrente:
+Todos os arquivos de saída são gerados na pasta `assembler/`.
+
+### Modo normal
 
 | Arquivo | Formato | Uso |
 |---------|---------|-----|
-| `instruction.mif` | Quartus MIF (endereço : dado) | Síntese no Quartus e simulação no ModelSim via `ram_init_file` |
-| `program.hex` | Um word hex por linha, sem cabeçalho | Simulação no ModelSim via `$readmemh` |
+| `instruction.mif` | Quartus MIF | Síntese (Quartus) e simulação (ModelSim via `ram_init_file`) |
+| `program.hex` | Um word hex por linha | Simulação via `$readmemh` |
 
-**Formato aceito (uma instrução por linha):**
+### Modo `--dump`
+
+Appenda automaticamente o código de dump serial ao programa do usuário, sem que o usuário precise escrever nenhuma instrução extra.
+
+| Arquivo | Conteúdo |
+|---------|----------|
+| `instruction.mif` | Código do usuário + `beq` de desvio + dump serial a partir de `0x080` |
+| `data.mif` | Zeros + constantes de infraestrutura do dump em `0x080–0x086` |
+
+**Layout da memória de instruções com `--dump`:**
 
 ```
-add  x3, x1, x2
-lw   x1, 0(x0)
-sw   x3, 8(x0)
-beq  x1, x2, -4
+0x000..N-1  Código do usuário (máx. 127 instruções)
+0xN         beq x0,x0,→0x80   (desvio incondicional para o dump)
+0xN+1..07F  NOP (addi x0,x0,0)
+0x080..0x0AD  Dump serial — Parts 2–8 (46 instruções)
 ```
+
+**Layout da memória de dados com `--dump`:**
+
+```
+0x000..0x01F  Área do usuário  (byte 0x000–0x07C) — transmitida no dump
+0x078..0x07F  Saves de x1–x8  (byte 0x1E0–0x1FC) — escritos em runtime
+0x080..0x086  Constantes de infraestrutura         — inicializadas no MIF
+```
+
+**O que o dump transmite via UART (164 bytes = 41 palavras):**
+
+```
+bytes  0–  3   Contador de ciclos (MMIO 0x414)
+bytes  4– 35   Registradores x1–x8
+bytes 36–163   dmem[0x000–0x07C] (32 palavras do usuário)
+```
+
+O programa do usuário pode ter no máximo **127 instruções**; o assembler valida e reporta erro se excedido.
+
+### Formato de entrada aceito
+
+```
+add  x3,x1,x2
+lw   x1,0(x0)
+sw   x3,8(x0)
+beq  x1,x2,-4
+```
+
+Uma instrução por linha, sem rótulos, sem comentários. O argumento de arquivo é opcional — o padrão é `instructions.txt`.
 
 ---
 
@@ -227,9 +285,32 @@ A escrita no banco de registradores ocorre na **borda de descida** do clock (`ne
 
 O halt é implementado como `beq x0, x0, 0`. Com resolução de branch no estágio EX, o PC oscila com período 3 (H, H+4, H+8, H, …). O testbench detecta halt quando `PC_atual == PC_de_3_ciclos_atrás` por 9 ciclos consecutivos (3 períodos completos).
 
-### UART (9600 8N1 a 10 MHz)
+### UART (9600 8N1 a 50 MHz)
 
-A UART é compartilhada com o projeto `riscv_single_cycle_mmio` (`sc_uart.sv`). Taxa de erro de baud: < 0,1% (1041 clocks/bit, baud efetivo 9606).
+Implementada em `pl_uart.sv` (parâmetros `CLK_HZ=50_000_000`, `BAUD=9600`). Taxa de erro: < 0,1% (5208 clocks/bit, baud efetivo 9601). O sequenciador de 4 bytes em `pl_mmio.sv` divide automaticamente cada `sw` em 0x410 em 4 transmissões consecutivas, liberando o software de enviar byte a byte.
+
+### Dump serial
+
+O script `dump/serial_dump.py` captura e decodifica o dump transmitido pelo FPGA. Pré-requisito: `pip install pyserial`.
+
+```bash
+python3 dump/serial_dump.py COM3            # Windows
+python3 dump/serial_dump.py /dev/ttyUSB0   # Linux
+python3 dump/serial_dump.py COM3 --out resultado.txt
+```
+
+Aguarda **164 bytes** (41 palavras × ~4 ms a 9600 baud) e exibe ciclos, x1–x8 e dmem[0x000–0x07C]. Para usar, compile com `python3 assembler.py --dump` e grave o bitstream no FPGA.
+
+**Fluxo completo:**
+
+```bash
+cd assembler
+python3 assembler.py --dump meu_programa.asm  # gera instruction.mif + data.mif
+cp instruction.mif data.mif ../quartus/        # copia para o projeto Quartus
+# compilar e gravar na FPGA via Quartus...
+cd ../dump
+python3 serial_dump.py COM3                    # captura o resultado
+```
 
 ---
 

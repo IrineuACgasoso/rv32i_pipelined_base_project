@@ -45,6 +45,7 @@ module pl_top (
     // O CPU so sai do reset quando a PLL esta travada e KEY[0] nao e pressionado
     assign rst_n = pll_locked & KEY[0];
 
+
     // -------------------------------------------------------------------------
     // CPU pipelined
     // -------------------------------------------------------------------------
