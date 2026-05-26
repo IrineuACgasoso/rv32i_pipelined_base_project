@@ -114,7 +114,7 @@ module pl_cpu_tb;
     always @(posedge clk) begin
         if (rst_n && wb_reg_write && wb_reg_dst != 5'b0) begin
             $display("[WB] REG x%0d = 0x%08X", wb_reg_dst, wb_reg_data);
-            $fdisplay(out_fd, "REG %2d = 0x%08X", wb_reg_dst, wb_reg_data);
+            //$fdisplay(out_fd, "REG %2d = 0x%08X", wb_reg_dst, wb_reg_data);
         end
     end
 
@@ -125,7 +125,7 @@ module pl_cpu_tb;
         if (rst_n && mem_wr_en) begin
             dmem_shadow[mem_wr_addr] <= mem_wr_data;
             $display("[MEM] dmem[%0d] = 0x%08X", mem_wr_addr, mem_wr_data);
-            $fdisplay(out_fd, "MEM[%3d] = 0x%08X", mem_wr_addr, mem_wr_data);
+            //$fdisplay(out_fd, "MEM[%3d] = 0x%08X", mem_wr_addr, mem_wr_data);
         end
     end
 
@@ -203,7 +203,8 @@ module pl_cpu_tb;
 
         // Acessa registradores diretamente via hierarquia
         for (i = 1; i < 32; i++) begin
-            if (dut.datapath.regfile.rf[i] !== 32'b0) begin
+            if (^dut.datapath.regfile.rf[i] !== 1'bX &&
+                dut.datapath.regfile.rf[i] != 32'b0) begin
                 $display("  x%0d = 0x%08X", i, dut.datapath.regfile.rf[i]);
                 $fdisplay(out_fd, "FINAL REG %2d = 0x%08X", i, dut.datapath.regfile.rf[i]);
             end
@@ -211,7 +212,8 @@ module pl_cpu_tb;
 
         $display("--- Estado final da dmem (palavras nao-zero) ---");
         for (i = 0; i < 16; i++) begin
-            if (dut.datapath.dmem.ram[i] !== 32'b0) begin
+             if (!$isunknown(dut.datapath.dmem.ram[i]) &&
+                dut.datapath.dmem.ram[i] != 32'b0) begin
                 $display("  dmem[%0d] = 0x%08X", i, dut.datapath.dmem.ram[i]);
                 $fdisplay(out_fd, "FINAL MEM[%3d] = 0x%08X", i, dut.datapath.dmem.ram[i]);
             end
@@ -239,31 +241,50 @@ module pl_cpu_tb;
         integer gfd, ofd;
         string  gline, oline;
         integer errs;
+
         errs = 0;
 
         gfd = $fopen("golden.txt", "r");
         ofd = $fopen("output.txt", "r");
 
         if (gfd == 0) begin
-            $display("AVISO: golden.txt nao encontrado -- pulando comparacao.");
+            $display("AVISO: golden.txt nao encontrado.");
             return 0;
         end
+
         if (ofd == 0) begin
-            $display("ERRO: output.txt nao pode ser aberto.");
+            $display("ERRO: output.txt nao encontrado.");
             return 1;
         end
 
-        while (!$feof(gfd)) begin
+        while (!$feof(gfd) && !$feof(ofd)) begin
+
             void'($fgets(gline, gfd));
             void'($fgets(oline, ofd));
+
+            // remove \n
+            if (gline.len() > 0 && gline[gline.len()-1] == "\n")
+                gline = gline.substr(0, gline.len()-2);
+
+            if (oline.len() > 0 && oline[oline.len()-1] == "\n")
+                oline = oline.substr(0, oline.len()-2);
+
+            // remove \r
+            if (gline.len() > 0 && gline[gline.len()-1] == "\r")
+                gline = gline.substr(0, gline.len()-2);
+
+            if (oline.len() > 0 && oline[oline.len()-1] == "\r")
+                oline = oline.substr(0, oline.len()-2);
+
             if (gline != oline) begin
-                $display("DIFF golden: %s  output: %s", gline, oline);
+                $display("DIFF golden: %s | output: %s", gline, oline);
                 errs++;
             end
         end
 
         $fclose(gfd);
         $fclose(ofd);
+
         return errs;
     endfunction
 

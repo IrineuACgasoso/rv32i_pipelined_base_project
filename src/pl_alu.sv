@@ -5,8 +5,12 @@
 // Codificacao de operacao (Operation[3:0]):
 //   4'd01 : ADD  -- adicao com sinal
 //   4'd02 : SUB  -- subtracao com sinal  (BEQ usa Zero)
+//   4'd03 : XOR  -- XOR bit a bit
 //   4'd04 : OR   -- OU bit a bit
 //   4'd05 : AND  -- E bit a bit
+//   4'd06 : SLL  -- shift left logical
+//   4'd07 : SRL  -- shift right logical
+//   4'd08 : SRA  -- shift right arithmetic
 //   4'd11 : SLT  -- set-less-than com sinal
 // =============================================================================
 
@@ -22,12 +26,28 @@ module pl_alu (
 
     always_comb begin
         case (Operation)
-            4'd01:   ALUResult = $signed(SrcA) + $signed(SrcB);
-            4'd02:   ALUResult = $signed(SrcA) - $signed(SrcB);
-            4'd04:   ALUResult = SrcA | SrcB;
-            4'd05:   ALUResult = SrcA & SrcB;
-            4'd11:   ALUResult = 32'($signed(SrcA) < $signed(SrcB));
-            default: ALUResult = 32'b0;
+            4'd01: // ADD
+                ALUResult = $signed(SrcA) + $signed(SrcB);
+            4'd02: // SUB
+                ALUResult = $signed(SrcA) - $signed(SrcB);
+            4'd03: // XOR
+                ALUResult = SrcA ^ SrcB;
+            4'd04: // OR
+                ALUResult = SrcA | SrcB;
+            4'd05: // AND
+                ALUResult = SrcA & SrcB;
+            4'd06: // SLL
+                ALUResult = SrcA << SrcB[4:0];
+            4'd07: // SRL
+                ALUResult = SrcA >> SrcB[4:0];
+            4'd08: // SRA
+                ALUResult = $signed(SrcA) >>> SrcB[4:0];
+            4'd11: // SLT (set-less-than)
+                ALUResult = ($signed(SrcA) < $signed(SrcB))
+                            ? 32'd1 : 32'd0;
+            default:
+                ALUResult = 32'b0;
+
         endcase
     end
 
