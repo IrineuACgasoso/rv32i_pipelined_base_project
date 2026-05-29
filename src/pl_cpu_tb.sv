@@ -241,51 +241,36 @@ module pl_cpu_tb;
         integer gfd, ofd;
         string  gline, oline;
         integer errs;
-
         errs = 0;
 
         gfd = $fopen("golden.txt", "r");
         ofd = $fopen("output.txt", "r");
 
         if (gfd == 0) begin
-            $display("AVISO: golden.txt nao encontrado.");
+            $display("AVISO: golden.txt nao encontrado -- pulando comparacao.");
             return 0;
         end
-
         if (ofd == 0) begin
-            $display("ERRO: output.txt nao encontrado.");
+            $display("ERRO: output.txt nao pode ser aberto.");
             return 1;
         end
 
-        while (!$feof(gfd) && !$feof(ofd)) begin
-
+        while (!$feof(gfd)) begin
             void'($fgets(gline, gfd));
             void'($fgets(oline, ofd));
-
-            // remove \n
-            if (gline.len() > 0 && gline[gline.len()-1] == "\n")
-                gline = gline.substr(0, gline.len()-2);
-
-            if (oline.len() > 0 && oline[oline.len()-1] == "\n")
-                oline = oline.substr(0, oline.len()-2);
-
-            // remove \r
-            if (gline.len() > 0 && gline[gline.len()-1] == "\r")
-                gline = gline.substr(0, gline.len()-2);
-
-            if (oline.len() > 0 && oline[oline.len()-1] == "\r")
-                oline = oline.substr(0, oline.len()-2);
-
             if (gline != oline) begin
-                $display("DIFF golden: %s | output: %s", gline, oline);
+                $display("DIFF golden: %s  output: %s", gline, oline);
                 errs++;
             end
         end
 
         $fclose(gfd);
         $fclose(ofd);
-
         return errs;
     endfunction
 
 endmodule
+vlog ../src/pl_cpu_tb.sv
+vsim work.pl_cpu_tb
+run -all
+
