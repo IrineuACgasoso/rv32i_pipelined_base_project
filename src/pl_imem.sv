@@ -1,25 +1,17 @@
 // =============================================================================
-// pl_dmem.sv  (ESTENDIDO)
-// Memoria de dados -- RV32I pipelined
+// pl_dmem.sv (Memória de Dados - RV32I)
+// Memória física de 1 KB (256 palavras x 32 bits) mapeada por byte.
 //
-// Capacidade : 256 palavras x 32 bits = 1 KB
-// Init file  : data.mif (sintese) / data.hex (simulacao)
+// Operações (Controladas pelo sinal funct3 e MemWrite/MemRead):
+//   000 (LB/SB)   : Acesso a 1 Byte
+//   001 (LH/SH)   : Acesso a Halfword (2 Bytes)
+//   010 (LW/SW)   : Acesso a Word Inteira (4 Bytes)
+//   100 (LBU)     : Acesso a Byte Unsigned (Extensão tratada no WB)
+//   101 (LHU)     : Acesso a Halfword Unsigned (Extensão tratada no WB)
 //
-// Operacoes suportadas (gated por funct3 + MemWrite/MemRead):
-//   funct3=000  LB / SB  (byte)
-//   funct3=001  LH / SH  (halfword)
-//   funct3=010  LW / SW  (word)
-//   funct3=100  LBU      (byte, zero-extend)
-//   funct3=101  LHU      (halfword, zero-extend)
-//
-// Obs: o sign-extend do dado lido e feito no estagio WB (pl_datapath),
-// usando mem_wb.funct3. A dmem entrega sempre os 32 bits da palavra,
-// e o datapath extrai o sub-campo correto.
-//
-// Escrita sub-palavra: usa byte-enable sincrono.
-//   SB: escreve somente o byte indicado por addr[1:0]
-//   SH: escreve somente os 2 bytes indicados por addr[1] (halfword-aligned)
-//   SW: escreve a palavra inteira
+// Detalhe de Escrita:
+// No RISC-V, o dado de um 'Store' (SB/SH) sempre vem dos LSBs de rs2.
+// A memória é responsável por colocar esse dado na posição correta (offset).
 // =============================================================================
 
 `timescale 1ns / 1ps
@@ -27,12 +19,15 @@
 module pl_dmem (
     input  logic        clk,
     input  logic        MemWrite,
-    input  logic [2:0]  funct3,      // 000=SB 001=SH 010=SW
-    input  logic [9:0]  addr,        // alu_result[9:0] -- endereco de BYTE
-    input  logic [31:0] WriteData,
-    output logic [31:0] ReadData     // palavra completa; WB faz sign/zero-extend
+    input  logic [2:0]  funct3,      // Indica a largura da operação (SB, SH, SW)
+    input  logic [9:0]  addr,        // Endereço de Byte vindo da ALU
+    input  logic [31:0] WriteData,   // Dado a ser escrito (vindo de rs2)
+    output logic [31:0] ReadData     // Palavra completa lida da memória
 );
 
+    // =========================================================================
+    // Armazenamento Físico e Inicialização
+    // =========================================================================
     (* ram_init_file = "data.mif" *) logic [31:0] ram [0:255];
 
     // synthesis translate_off
@@ -42,15 +37,22 @@ module pl_dmem (
     end
     // synthesis translate_on
 
-    // Endereco de palavra (bits [9:2]) e offset de byte dentro da palavra
-    wire [7:0]  word_addr = addr[9:2];
-    wire [1:0]  byte_off  = addr[1:0];
+    // =========================================================================
+    // Decodificação de Endereço
+    // =========================================================================
+    // word_addr: Índice da palavra de 32 bits na matriz da RAM (0 a 255)
+    // byte_off:  Deslocamento do byte exato dentro dessa palavra
+    wire [7:0] word_addr = addr[9:2];
+    wire [1:0] byte_off  = addr[1:0];
 
-    // Escrita sincrona com byte-enable
+    // =========================================================================
+    // Escrita Síncrona com Endereçamento e Mascaramento Parcial
+    // =========================================================================
     always @(posedge clk) begin
         if (MemWrite) begin
             case (funct3)
-                3'b000: begin // SB
+                // --- STORE BYTE (SB) ---
+                3'b000: begin 
                     case (byte_off)
                         2'd0: ram[word_addr][7:0]   <= WriteData[7:0];
                         2'd1: ram[word_addr][15:8]  <= WriteData[7:0];
@@ -58,19 +60,29 @@ module pl_dmem (
                         2'd3: ram[word_addr][31:24] <= WriteData[7:0];
                     endcase
                 end
-                3'b001: begin // SH (assume halfword-aligned)
+                
+                // --- STORE HALFWORD (SH) ---
+                3'b001: begin 
+                    // Assume alinhamento em 16 bits (halfword-aligned)
                     if (byte_off[1] == 1'b0)
                         ram[word_addr][15:0]  <= WriteData[15:0];
                     else
                         ram[word_addr][31:16] <= WriteData[15:0];
                 end
-                default: // SW (funct3=010)
+                
+                // --- STORE WORD (SW) ---
+                default: begin // funct3 = 3'b010
                     ram[word_addr] <= WriteData;
+                end
             endcase
         end
     end
 
-    // Leitura assincrona: retorna a palavra inteira (WB extrai sub-campo)
+    // =========================================================================
+    // Leitura Assíncrona Combinatorial
+    // =========================================================================
+    // Sempre entrega os 32 bits completos referentes ao word_addr.
+    // O Datapath (no estágio WB) cuida de extrair o byte/halfword correto.
     assign ReadData = ram[word_addr];
 
 endmodule

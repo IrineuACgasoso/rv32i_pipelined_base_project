@@ -1,28 +1,18 @@
 // =============================================================================
-// pl_uart.sv
-// Simple RS-232 UART -- 8N1 (8 data bits, no parity, 1 stop bit)
+// pl_uart.sv (Controlador de Comunicação Serial RS-232)
+// Implementação padrão 8N1: 8 bits de dados, sem paridade, 1 stop bit.
 //
-// Parameters:
-//   CLK_HZ : CPU clock frequency in Hz (default 50 MHz)
-//   BAUD   : desired baud rate         (default 9600)
+// Parâmetros:
+//   CLK_HZ : Frequência do clock da CPU em Hz (Default: 50 MHz)
+//   BAUD   : Taxa de transmissão desejada (Default: 9600)
 //
-// TX interface:
-//   tx_write  -- 1-cycle strobe: load tx_data and begin transmission.
-//               Writes asserted while tx_busy is high are ignored.
-//   tx_data   -- byte to transmit (7:0)
-//   tx_busy   -- high while the shift register is active
-//   TXD       -- RS-232 transmit pin (idle HIGH)
+// Interface de Transmissão (TX):
+//   tx_write : Strobe de 1 ciclo. Carrega tx_data e inicia o envio.
+//   tx_busy  : Permanece em alto (1) durante todo o processo de shift out.
 //
-// RX interface:
-//   rx_data   -- last received byte (held until next reception)
-//   rx_valid  -- pulses HIGH for exactly one clock cycle when rx_data
-//               is updated (start-bit validated, 8 data bits sampled,
-//               stop bit confirmed HIGH)
-//   RXD       -- RS-232 receive pin (idle HIGH), double-flopped internally
-//
-// Baud-rate error at 9600 baud / 50 MHz:
-//   CLKS_PER_BIT = 50_000_000 / 9_600 = 5208
-//   Actual baud  = 50_000_000 / 5208  = 9601  (error < 0.1 % -- well within RS-232 spec)
+// Interface de Recepção (RX):
+//   rx_data  : Armazena o último byte completo recebido de forma estável.
+//   rx_valid : Pulsa em alto por exatamente 1 ciclo assim que um byte é validado.
 // =============================================================================
 
 `timescale 1ns / 1ps
@@ -32,27 +22,27 @@ module pl_uart #(
     parameter int BAUD   =      9_600
 ) (
     input  logic       clk,
-    input  logic       rst_n,     // active-low asynchronous reset
+    input  logic       rst_n,      // Reset assíncrono ativo-baixo
 
-    // CPU-side interface
-    input  logic       tx_write,  // 1-cycle write strobe from MMIO
-    input  logic [7:0] tx_data,   // byte to transmit
-    output logic       tx_busy,   // 1 while transmitting
-    output logic [7:0] rx_data,   // last received byte
-    output logic       rx_valid,  // 1-cycle pulse on new byte
+    // Interface com o Controlador de MMIO
+    input  logic       tx_write,   // Sinal de escrita (strobe)
+    input  logic [7:0] tx_data,    // Byte a ser enviado
+    output logic       tx_busy,    // Flag de transmissor ocupado
+    output logic [7:0] rx_data,    // Byte recebido e estabilizado
+    output logic       rx_valid,   // Strobe de novo dado recebido
 
-    // Physical RS-232 pins (TTL level -- connect to FPGA I/O, MAX232 handles V-level)
-    output logic       TXD,       // to RS-232 connector (via MAX232)
-    input  logic       RXD        // from RS-232 connector (via MAX232)
+    // Pinos Físicos da Interface RS-232 (Nível TTL)
+    output logic       TXD,        // Linha de transmissão física (Idle = 1)
+    input  logic       RXD         // Linha de recepção física (Idle = 1)
 );
 
-    // -------------------------------------------------------------------------
-    // Derived parameter: clock ticks per bit period
-    // -------------------------------------------------------------------------
-    localparam int CLKS_PER_BIT = CLK_HZ / BAUD;   // 1041 @ 9600 / 10 MHz
+    // =========================================================================
+    // Parâmetros Derivados: Divisor de Baud-Rate
+    // =========================================================================
+    localparam int CLKS_PER_BIT = CLK_HZ / BAUD;
 
     // =========================================================================
-    // Transmitter
+    // 1. MÁQUINA DE ESTADOS DO TRANSMISSOR (TX)
     // =========================================================================
     typedef enum logic [1:0] {
         TX_IDLE  = 2'd0,
@@ -62,14 +52,14 @@ module pl_uart #(
     } tx_state_t;
 
     tx_state_t   tx_state;
-    logic [15:0] tx_cnt;       // bit-period counter (needs >= log2(CLKS_PER_BIT) bits)
-    logic [2:0]  tx_bit_idx;   // current data bit index (0..7)
-    logic [7:0]  tx_sr;        // transmit shift register
+    logic [15:0] tx_cnt;       // Contador de ciclos de clock por bit
+    logic [2:0]  tx_bit_idx;   // Ponteiro do bit de dados atual (0 a 7)
+    logic [7:0]  tx_sr;        // Registrador de deslocamento (Shift Register)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             tx_state   <= TX_IDLE;
-            TXD        <= 1'b1;     // idle line = HIGH
+            TXD        <= 1'b1; // Linha serial em repouso fica em HIGH
             tx_busy    <= 1'b0;
             tx_cnt     <= '0;
             tx_bit_idx <= '0;
@@ -77,19 +67,19 @@ module pl_uart #(
         end else begin
             case (tx_state)
 
-                // ---- IDLE: wait for write strobe ----------------------------
+                // --- Aguarda o comando de escrita da CPU ---
                 TX_IDLE: begin
                     TXD     <= 1'b1;
                     tx_busy <= 1'b0;
                     if (tx_write) begin
-                        tx_sr      <= tx_data;
-                        tx_busy    <= 1'b1;
-                        tx_cnt     <= '0;
-                        tx_state   <= TX_START;
+                        tx_sr    <= tx_data;
+                        tx_busy  <= 1'b1;
+                        tx_cnt   <= '0;
+                        tx_state <= TX_START;
                     end
                 end
 
-                // ---- START bit (LOW) ----------------------------------------
+                // --- Envia o START BIT (Linha em LOW) ---
                 TX_START: begin
                     TXD <= 1'b0;
                     if (tx_cnt == CLKS_PER_BIT - 1) begin
@@ -97,28 +87,28 @@ module pl_uart #(
                         tx_bit_idx <= '0;
                         tx_state   <= TX_DATA;
                     end else begin
-                        tx_cnt <= tx_cnt + 1;
+                        tx_cnt <= tx_cnt + 1'b1;
                     end
                 end
 
-                // ---- 8 DATA bits (LSB first) --------------------------------
+                // --- Envia os 8 Bits de Dados (LSB Primeiro) ---
                 TX_DATA: begin
-                    TXD <= tx_sr[0];
+                    TXD <= tx_sr[0]; // Envia o bit menos significativo atual
                     if (tx_cnt == CLKS_PER_BIT - 1) begin
                         tx_cnt <= '0;
-                        tx_sr  <= {1'b0, tx_sr[7:1]};   // shift right
+                        tx_sr  <= {1'b0, tx_sr[7:1]}; // Desloca para a direita
                         if (tx_bit_idx == 3'd7) begin
                             tx_bit_idx <= '0;
                             tx_state   <= TX_STOP;
                         end else begin
-                            tx_bit_idx <= tx_bit_idx + 1;
+                            tx_bit_idx <= tx_bit_idx + 1'b1;
                         end
                     end else begin
-                        tx_cnt <= tx_cnt + 1;
+                        tx_cnt <= tx_cnt + 1'b1;
                     end
                 end
 
-                // ---- STOP bit (HIGH) ----------------------------------------
+                // --- Envia o STOP BIT (Linha em HIGH) ---
                 TX_STOP: begin
                     TXD <= 1'b1;
                     if (tx_cnt == CLKS_PER_BIT - 1) begin
@@ -126,7 +116,7 @@ module pl_uart #(
                         tx_busy  <= 1'b0;
                         tx_state <= TX_IDLE;
                     end else begin
-                        tx_cnt <= tx_cnt + 1;
+                        tx_cnt <= tx_cnt + 1'b1;
                     end
                 end
 
@@ -135,23 +125,23 @@ module pl_uart #(
     end
 
     // =========================================================================
-    // Receiver
+    // 2. SINCRONIZADOR DE SINAL RXD (Anti-Metaestabilidade)
     // =========================================================================
-
-    // --- Two-stage synchronizer: bring RXD into the clk domain --------------
-    logic rxd_s, rxd_q;    // rxd_q is the stable, synchronized value
+    logic rxd_s, rxd_q;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             rxd_s <= 1'b1;
             rxd_q <= 1'b1;
         end else begin
-            rxd_s <= RXD;
-            rxd_q <= rxd_s;
+            rxd_s <= RXD;   // Primeiro estágio de captura
+            rxd_q <= rxd_s; // Segundo estágio estabilizado (seguro para a FSM)
         end
     end
 
-    // --- Receiver state machine ----------------------------------------------
+    // =========================================================================
+    // 3. MÁQUINA DE ESTADOS DO RECEPTOR (RX)
+    // =========================================================================
     typedef enum logic [1:0] {
         RX_IDLE  = 2'd0,
         RX_START = 2'd1,
@@ -160,9 +150,9 @@ module pl_uart #(
     } rx_state_t;
 
     rx_state_t   rx_state;
-    logic [15:0] rx_cnt;
-    logic [2:0]  rx_bit_idx;
-    logic [7:0]  rx_sr;       // receive shift register
+    logic [15:0] rx_cnt;       // Contador de ciclos para amostragem
+    logic [2:0]  rx_bit_idx;   // Ponteiro de reconstrução do bit (0 a 7)
+    logic [7:0]  rx_sr;        // Registrador de deslocamento de entrada
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -173,61 +163,61 @@ module pl_uart #(
             rx_bit_idx <= '0;
             rx_sr      <= '0;
         end else begin
-            rx_valid <= 1'b0;   // default: pulse lasts exactly one cycle
+            rx_valid <= 1'b0; // Garante que o pulso dure estritamente 1 ciclo
 
             case (rx_state)
 
-                // ---- IDLE: detect falling edge of start bit -----------------
+                // --- Aguarda a descida da linha (Falling Edge do Start Bit) ---
                 RX_IDLE: begin
-                    if (!rxd_q) begin               // line went LOW -> start bit
+                    if (!rxd_q) begin
                         rx_cnt   <= '0;
                         rx_state <= RX_START;
                     end
                 end
 
-                // ---- START: sample at mid-bit to confirm >= 0 ---------------
+                // --- Amostra no meio do bit para validar o START BIT ---
                 RX_START: begin
-                    if (rx_cnt == CLKS_PER_BIT / 2 - 1) begin
-                        if (!rxd_q) begin           // still LOW: valid start bit
+                    if (rx_cnt == (CLKS_PER_BIT / 2) - 1) begin
+                        if (!rxd_q) begin // Confirmado: linha ainda em LOW
                             rx_cnt     <= '0;
                             rx_bit_idx <= '0;
                             rx_state   <= RX_DATA;
                         end else begin
-                            rx_state <= RX_IDLE;    // glitch: discard
+                            rx_state <= RX_IDLE; // Ruído/Glitch detectado
                         end
                     end else begin
-                        rx_cnt <= rx_cnt + 1;
+                        rx_cnt <= rx_cnt + 1'b1;
                     end
                 end
 
-                // ---- DATA: sample 8 bits at full-period intervals -----------
+                // --- Captura os 8 Bits de Dados em intervalos regulares ---
                 RX_DATA: begin
                     if (rx_cnt == CLKS_PER_BIT - 1) begin
                         rx_cnt <= '0;
-                        rx_sr  <= {rxd_q, rx_sr[7:1]};  // LSB first -> shift into MSB
+                        rx_sr  <= {rxd_q, rx_sr[7:1]}; // Injeta o bit no MSB (LSB entra primeiro)
                         if (rx_bit_idx == 3'd7) begin
                             rx_bit_idx <= '0;
                             rx_state   <= RX_STOP;
                         end else begin
-                            rx_bit_idx <= rx_bit_idx + 1;
+                            rx_bit_idx <= rx_bit_idx + 1'b1;
                         end
                     end else begin
-                        rx_cnt <= rx_cnt + 1;
+                        rx_cnt <= rx_cnt + 1'b1;
                     end
                 end
 
-                // ---- STOP: confirm HIGH, then latch byte --------------------
+                // --- Confirma o STOP BIT (Linha em HIGH) e disponibiliza o dado ---
                 RX_STOP: begin
                     if (rx_cnt == CLKS_PER_BIT - 1) begin
                         rx_cnt   <= '0;
                         rx_state <= RX_IDLE;
-                        if (rxd_q) begin            // valid stop bit
+                        if (rxd_q) begin // Stop bit válido detectado
                             rx_data  <= rx_sr;
-                            rx_valid <= 1'b1;
+                            rx_valid <= 1'b1; // Notifica a CPU / MMIO
                         end
-                        // framing error (stop=0): silently discard
+                        // Se rxd_q for 0 aqui, ocorreu um Framing Error (descartado silenciosamente)
                     end else begin
-                        rx_cnt <= rx_cnt + 1;
+                        rx_cnt <= rx_cnt + 1'b1;
                     end
                 end
 
