@@ -154,6 +154,7 @@ module pl_datapath (
                     2'd2: mem_read_wb = {{24{mem_wb.read_data[23]}}, mem_wb.read_data[23:16]};
                     2'd3: mem_read_wb = {{24{mem_wb.read_data[31]}}, mem_wb.read_data[31:24]};
                 endcase
+            
             3'b001: // LH: Lê halfword e estende o sinal de 16 para 32 bits
                 mem_read_wb = mem_wb.alu_result[1] ?
                     {{16{mem_wb.read_data[31]}}, mem_wb.read_data[31:16]} :

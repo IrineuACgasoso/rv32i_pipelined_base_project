@@ -1,0 +1,9 @@
+addi x1,x0,8
+addi x2,x0,2
+sll x3,x1,x2
+srl x4,x1,x2
+sra x5,x1,x2
+andi x6,x1,3
+ori x7,x2,8
+slti x8,x2,5
+beq x0,x0,0
